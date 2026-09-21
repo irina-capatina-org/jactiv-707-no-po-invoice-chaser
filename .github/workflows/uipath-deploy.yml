@@ -422,9 +422,16 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -euo pipefail
-          if [ "$SCOPE" = "solution" ]; then
-            PKG=$(find "$OUTPUT_DIR" -type f \( -name '*.uipx' -o -name "${NAME}_${VERSION}.zip" -o -name '*.zip' \) 2>/dev/null | head -1 || true)
-            [ -n "$PKG" ] || { echo "::error::No solution package in $OUTPUT_DIR."; exit 1; }
+          # Branch on WHAT WAS BUILT, not on the declared scope. `Build package`
+          # already decides by looking for a .uipx manifest under code/, and every
+          # build now ships as a solution whatever its scope says - so a
+          # `single-product` design still produces `uip solution pack` output
+          # (NAME_VERSION.zip). Keying this step on scope instead sent a perfectly
+          # good solution zip down the per-project path, which hunts for .nupkg
+          # files that a solution build never produces, and failed the deploy with
+          # "No .nupkg found to publish".
+          PKG=$(find "$OUTPUT_DIR" -type f \( -name '*.uipx' -o -name "${NAME}_${VERSION}.zip" -o -name '*.zip' \) 2>/dev/null | head -1 || true)
+          if [ -n "$PKG" ]; then
             echo "Publishing solution $PKG"
             uip solution publish "$PKG"
           else
@@ -436,7 +443,10 @@ jobs:
                 echo "::error::Upload failed for $pkg. Supported surface:"; uip or packages --help || true; exit 1; }
               PUBLISHED=$((PUBLISHED + 1))
             done < <(find "$OUTPUT_DIR" -type f -name '*.nupkg' | sort)
-            [ "$PUBLISHED" -gt 0 ] || { echo "::error::No .nupkg found to publish."; exit 1; }
+            [ "$PUBLISHED" -gt 0 ] || {
+              echo "::error::Nothing to publish in $OUTPUT_DIR - no solution package (.uipx / ${NAME}_${VERSION}.zip) and no .nupkg."
+              ls -la "$OUTPUT_DIR" 2>/dev/null || echo "  ($OUTPUT_DIR does not exist)"
+              exit 1; }
             echo "Published $PUBLISHED package(s)."
           fi
 
@@ -544,7 +554,9 @@ jobs:
           uip or processes list --all-folders --output table 2>&1 | head -40 || \
             echo "::warning::Could not list processes - check the granted scopes."
 
-          if [ "$SCOPE" = "solution" ]; then
+          # Same reasoning as Publish: a solution was shipped whenever one was packed,
+          # regardless of what sdd_scope says.
+          if find "$OUTPUT_DIR" -type f \( -name '*.uipx' -o -name '*.zip' \) 2>/dev/null | grep -q .; then
             echo "=== solution deployments ==="
             uip solution deploy list --output table 2>&1 | head -20 || \
               echo "::warning::Could not list solution deployments."
