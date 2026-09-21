@@ -15,8 +15,9 @@
       "story": "JACTIV-707"
     },
     "Architecture": {
-      "status": "todo",
-      "updatedAt": null
+      "status": "in-progress",
+      "updatedAt": "2026-09-21T10:06:04Z",
+      "task": "Designing the solution"
     },
     "Development": {
       "status": "todo",
