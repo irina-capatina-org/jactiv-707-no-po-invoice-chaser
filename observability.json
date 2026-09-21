@@ -30,9 +30,12 @@
       "run": 35587542598
     },
     "Testing": {
-      "status": "in-progress",
-      "updatedAt": "2026-09-21T10:20:07Z",
-      "task": "Running tests"
+      "status": "in-review",
+      "updatedAt": "2026-09-21T10:20:47Z",
+      "task": "Running tests",
+      "decidedBy": "agent",
+      "pr": 3,
+      "prUrl": "https://github.com/irina-capatina-org/jactiv-707-no-po-invoice-chaser/pull/3"
     },
     "Documentation": {
       "status": "todo",
