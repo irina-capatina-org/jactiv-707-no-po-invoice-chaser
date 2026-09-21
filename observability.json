@@ -30,8 +30,9 @@
       "run": 35587542598
     },
     "Testing": {
-      "status": "todo",
-      "updatedAt": null
+      "status": "in-progress",
+      "updatedAt": "2026-09-21T10:20:07Z",
+      "task": "Running tests"
     },
     "Documentation": {
       "status": "todo",
