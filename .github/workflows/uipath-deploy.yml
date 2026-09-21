@@ -416,6 +416,7 @@ jobs:
           echo "Authenticated."
 
       - name: Publish
+        id: publish
         env:
           SCOPE:   ${{ needs.resolve.outputs.scope }}
           NAME:    ${{ needs.resolve.outputs.solution_name }}
@@ -434,7 +435,10 @@ jobs:
           if [ -n "$PKG" ]; then
             echo "Publishing solution $PKG"
             uip solution publish "$PKG"
+            # Downstream steps gate on what was ACTUALLY published, not on sdd_scope.
+            echo "solution=true" >> "$GITHUB_OUTPUT"
           else
+            echo "solution=false" >> "$GITHUB_OUTPUT"
             PUBLISHED=0
             while IFS= read -r pkg; do
               [ -n "$pkg" ] || continue
@@ -452,8 +456,12 @@ jobs:
 
       # Orchestrator indexes a freshly published package asynchronously, so the first
       # deploy attempt routinely reports it as not ready. Retry rather than fail.
+      # Gated on what Publish actually shipped, NOT on sdd_scope. Every build now
+      # produces a solution whatever its scope says, so a `single-product` run was
+      # publishing a solution zip and then SKIPPING this step - the package appeared
+      # in Orchestrator and was never deployed, with a green tick on the run.
       - name: Deploy to Orchestrator
-        if: needs.resolve.outputs.scope == 'solution'
+        if: steps.publish.outputs.solution == 'true'
         env:
           NAME:        ${{ needs.resolve.outputs.solution_name }}
           VERSION:     ${{ needs.resolve.outputs.version }}
@@ -501,7 +509,7 @@ jobs:
             echo ""
             echo "\`${{ needs.resolve.outputs.solution_name }}\` v\`${{ needs.resolve.outputs.version }}\` -> folder \`${{ needs.resolve.outputs.folder_path }}\`"
             echo ""
-            echo "Path: $([ "${{ needs.resolve.outputs.scope }}" = "solution" ] && echo 'solution publish + deploy run' || echo 'package upload (no Solution wrapper)')"
+            echo "Path: $([ "${{ steps.publish.outputs.solution }}" = "true" ] && echo 'solution publish + deploy run' || echo 'package upload (no Solution wrapper)')"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ═══════════════════════════════════════════════════════════════
