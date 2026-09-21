@@ -1,0 +1,22 @@
+{
+  "projectWatches": {
+    "value": []
+  },
+  "projectBreakpoints": {
+    "value": {
+      "uip-sw-local://File/712721ba-bf1c-421b-b093-dc9860d75ae5/NoPoInvoiceChaser/Workflow.json": [
+        {
+          "actionExpression": null,
+          "activityId": null,
+          "activityIdRef": "Javascript_CheckSlack",
+          "activityName": null,
+          "conditionalExpression": null,
+          "expectedHitCounter": null,
+          "id": "a0ee22f8-79f2-4247-901e-c1a8355c1780",
+          "isEnabled": true,
+          "shouldContinueAfterAction": false
+        }
+      ]
+    }
+  }
+}
