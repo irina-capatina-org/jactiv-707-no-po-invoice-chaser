@@ -1,0 +1,137 @@
+{
+  "story_key": "JACTIV-707",
+  "branch": "architecture-jactiv-707",
+  "revision": 1,
+  "process_name": "NoPoInvoiceChaser",
+  "process_kebab": "no-po-invoice-chaser",
+  "delivery_model": "cloud",
+  "level_0_outcome": "proceed",
+  "level_0_findings": [],
+  "need_profile": "Headless weekday control that queries Coupa for invoices missing a linked PO and sends one Slack DM to the AP SME; target KPI is full daily coverage with zero manual effort",
+  "sdd_scope": "single-product",
+  "primary_product": "api-workflows",
+  "blocked_products": [
+    {
+      "product": "ixp",
+      "reason": "platform matrix",
+      "alternative_applied": "not needed — no document classification in scope"
+    },
+    {
+      "product": "maestro-bpmn",
+      "reason": "platform matrix",
+      "alternative_applied": "not needed — single linear workflow; API Workflow is the host"
+    }
+  ],
+  "projects": [
+    {
+      "name": "NoPoInvoiceChaser",
+      "kebab": "no-po-invoice-chaser",
+      "product": "api-workflows",
+      "skill": "uipath-api-workflow",
+      "role": "primary",
+      "authoring_mode": "n/a",
+      "framework": "n/a",
+      "sdd_file": "docs/sdd-jactiv-707-no-po-invoice-chaser.md",
+      "build_order": 1,
+      "why": "Single headless API Workflow: calculate date window, query Coupa via IS connection, filter invoices (credit-note + PO-linkage), count qualifiers, compose and send Slack DM via IS connection — all steps are in-process HTTP connector calls with no UI and no bot"
+    }
+  ],
+  "integrated_components": [
+    {
+      "type": "integration-service",
+      "name": "coupa-uipath-test",
+      "host_project": "NoPoInvoiceChaser",
+      "skill": "uipath-platform",
+      "why": "Existing IS connection (id: 5fadfc73-a372-46ae-a27c-2481741eed07, connector: uipath-coupa-coupa) used for all Coupa invoice queries via HTTP Request activity with authentication: connector"
+    },
+    {
+      "type": "integration-service",
+      "name": "slack-product-test-app",
+      "host_project": "NoPoInvoiceChaser",
+      "skill": "uipath-platform",
+      "why": "Existing IS connection (id: 43d506f7-7de2-4798-aac1-9522e2e45dbb, connector: uipath-salesforce-slack) used for Slack DM delivery via HTTP Request activity with authentication: connector"
+    }
+  ],
+  "queues": [],
+  "capability_addons": ["integration-service"],
+  "sdd_files": [
+    {
+      "path": "docs/sdd-jactiv-707-no-po-invoice-chaser.md",
+      "template": "api-workflow-sdd-template.md",
+      "role": "single-product",
+      "project": "NoPoInvoiceChaser"
+    }
+  ],
+  "tasks_file": "no-po-invoice-chaser-tasks.md",
+  "decisions": [
+    {
+      "level": "Constraint Gate",
+      "picked": "Automation Cloud — standard, EU, modern folders; serverless API Workflow runtime unlimited; Integration Service fully available; IXP and Maestro BPMN blocked (not available); RPA available but limited (not needed here)",
+      "reason": "Delivery model confirmed as Automation Cloud in org architectural considerations §1. Licensing table §2 applied: IXP not available, Maestro BPMN not available — neither is needed for this process. API Workflows fully available and serverless runtime has no limit (§5), making it unconstrained for this automation.",
+      "source": "pdd"
+    },
+    {
+      "level": "Level 1",
+      "picked": "api-workflows",
+      "reason": "Pinned by the architecture job. Process is headless and system-to-system: Coupa REST query → in-memory filter loop → Slack REST send. Both systems have confirmed IS connections. No UI, no bot, no machine-local work. Org §3 preference: 'stable REST API exists for every system → API Workflow'. Serverless runtime available with no limit (§5).",
+      "source": "steer"
+    },
+    {
+      "level": "Level 2.5",
+      "picked": "single project — no dispatcher/performer split",
+      "reason": "PDD §14 explicitly states a simple in-memory loop is sufficient and no queue-based transactional pattern is indicated. Volume is up to 194 invoices per run — well below the ~200-item threshold for a Master Project per org §3. A single API Workflow project covers the full end-to-end sequence.",
+      "source": "pdd"
+    },
+    {
+      "level": "Level 3",
+      "picked": "integration-service only",
+      "reason": "Both integrations (Coupa and Slack) use existing IS connections via the HTTP Request activity with authentication: connector, per org §4 approved pattern. No HITL (PDD explicitly excludes human approval, §4 scope out-of-scope). No custom connector needed (both connectors exist in catalog). No IXP (not available; not needed). No LLM activity (all filtering is deterministic rules). No Coded Function (string formatting is native in the workflow).",
+      "source": "pdd"
+    }
+  ],
+  "architect_review_items": [
+    {
+      "section": "§15 OQ-01",
+      "item": "Clean-day behaviour contradiction",
+      "question": "When qualifying count = 0: BR-07 and section 4.3 say send nothing; section 7.1 says send a congratulations Slack message. Which behaviour is required?",
+      "default_applied": "No message sent on a clean day (BR-07 text is authoritative per PDD)",
+      "blocking": false
+    },
+    {
+      "section": "§15 OQ-02",
+      "item": "Retry and error-notification behaviour contradiction",
+      "question": "BR-08/BR-09 text says no retry and no error notification; the future-state diagram shows retry up to 3 attempts and an error Slack message. Which is authoritative? If the diagram, what is the error message content?",
+      "default_applied": "No retry, no error notification; failed run reported in Orchestrator only (BR-08/BR-09 text is authoritative per PDD)",
+      "blocking": false
+    },
+    {
+      "section": "§15 OQ-03",
+      "item": "Coupa filtered URL status parameter",
+      "question": "The sample URL uses status_eq=draft only; BR-04 includes both draft and new. Should the Coupa link in the Slack message filter to draft+new, and does a combined parameter exist?",
+      "default_applied": "URL uses status_eq=draft only, verbatim from source section 4.3",
+      "blocking": false
+    },
+    {
+      "section": "§15 OQ-11",
+      "item": "Coupa API pagination",
+      "question": "Does the Coupa invoice API paginate results? If page size is less than 194, the workflow must iterate pages to collect all records.",
+      "default_applied": "Single-page response assumed given observed sample volume of 194; developer must verify against Coupa API docs and implement pagination if needed",
+      "blocking": false
+    },
+    {
+      "section": "§15 OQ-12 / §11",
+      "item": "Coupa PO-linkage field name on invoice lines",
+      "question": "What is the exact Coupa API field name on invoice lines that carries the proper PO linkage reference? The architectural considerations §4 live-run note mentions po-number and order-header-num on invoice-lines[] — developer must confirm which field satisfies BR-01/BR-02.",
+      "default_applied": "Use invoice-lines[].po-number / order-header-num per org considerations §4 live-run verification; confirm against Coupa API schema at build time",
+      "blocking": false
+    },
+    {
+      "section": "§1 Document Control",
+      "item": "Epic key not confirmed in PDD",
+      "question": "PDD §1 lists Epic key as [SME REVIEW]. For resource naming, the repo name jactiv-707-no-po-invoice-chaser establishes the prefix jactiv_707_ per org naming rules — but the formal Jira epic key is unconfirmed.",
+      "default_applied": "Resource prefix jactiv_707_ derived from repository name per org architectural considerations §4 naming rules",
+      "blocking": false
+    }
+  ],
+  "revision_impact": "first design"
+}

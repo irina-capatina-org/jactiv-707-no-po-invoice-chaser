@@ -1,0 +1,12 @@
+{
+  "DocVersion": "1.0.0",
+  "StudioMinVersion": "2025.10.0",
+  "SolutionId": "05e27178-930f-4858-a2c3-be2725f9bca3",
+  "Projects": [
+    {
+      "Type": "Api",
+      "ProjectRelativePath": "NoPoInvoiceChaser/project.uiproj",
+      "Id": "56c2e8ad-b04c-40df-a151-1a05ebfdb3a5"
+    }
+  ]
+}
