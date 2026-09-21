@@ -46,8 +46,8 @@
       "run": 35588580456
     },
     "Production": {
-      "status": "in-progress",
-      "updatedAt": "2026-09-21T17:25:06Z",
+      "status": "done",
+      "updatedAt": "2026-09-21T17:26:38Z",
       "decidedBy": "human",
       "task": "Deploying",
       "run": 35631849148,
