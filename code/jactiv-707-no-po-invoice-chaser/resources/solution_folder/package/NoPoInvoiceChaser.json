@@ -1,0 +1,23 @@
+{
+  "docVersion": "1.0.0",
+  "resource": {
+    "name": "NoPoInvoiceChaser",
+    "kind": "package",
+    "apiVersion": "orchestrator.uipath.com/v1",
+    "projectKey": "56c2e8ad-b04c-40df-a151-1a05ebfdb3a5",
+    "isOverridable": true,
+    "dependencies": [],
+    "runtimeDependencies": [],
+    "folders": [
+      {
+        "fullyQualifiedName": "solution_folder"
+      }
+    ],
+    "spec": {
+      "name": "NoPoInvoiceChaser"
+    },
+    "locks": [],
+    "key": "d1d74bdf-1764-42e5-8ce6-0d91035d5b8c",
+    "files": []
+  }
+}

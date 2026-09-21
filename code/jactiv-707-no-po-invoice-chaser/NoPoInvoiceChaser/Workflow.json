@@ -1,0 +1,423 @@
+{
+  "document": {
+    "dsl": "1.0.0",
+    "name": "NoPoInvoiceChaser",
+    "tags": {
+      "projectId": "56c2e8ad-b04c-40df-a151-1a05ebfdb3a5"
+    },
+    "version": "0.0.1",
+    "namespace": "default",
+    "metadata": {
+      "variables": {
+        "schema": {
+          "format": "json",
+          "document": {
+            "type": "object",
+            "properties": {
+              "windowStart": {
+                "type": "string",
+                "default": ""
+              },
+              "windowEnd": {
+                "type": "string",
+                "default": ""
+              },
+              "qualifyingCount": {
+                "type": "number",
+                "default": 0
+              },
+              "coupaFilteredUrl": {
+                "type": "string",
+                "default": ""
+              },
+              "slackMessageBody": {
+                "type": "string",
+                "default": ""
+              }
+            },
+            "title": "Variables"
+          }
+        }
+      }
+    }
+  },
+  "input": {
+    "schema": {
+      "format": "json",
+      "document": {
+        "type": "object",
+        "properties": {},
+        "title": "Inputs"
+      }
+    }
+  },
+  "output": {
+    "schema": {
+      "format": "json",
+      "document": {
+        "type": "object",
+        "properties": {},
+        "title": "Outputs"
+      }
+    }
+  },
+  "do": [
+    {
+      "Sequence_1": {
+        "do": [
+          {
+            "WorkflowStart": {
+              "set": "${ { ...Object.entries($workflow.definition?.document?.metadata?.variables?.schema?.document?.properties || {}).reduce((acc, [name, def]) => ({ ...acc, [name]: def?.default }), {}), ...($workflow.input || {}) } }",
+              "output": {
+                "as": "${$input}"
+              },
+              "export": {
+                "as": "{ ...$context, variables: { ...$context.variables, ...$output } }"
+              },
+              "metadata": {
+                "activityType": "Assign",
+                "displayName": "Workflow start",
+                "fullName": "Assign",
+                "isTransparent": true
+              }
+            }
+          },
+          {
+            "Try_Catch_1": {
+              "try": [
+                {
+                  "Javascript_DateWindow": {
+                    "run": {
+                      "script": {
+                        "code": "const now = new Date(); const pad = n => String(n).padStart(2,'0'); const fmt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; const end = new Date(now); const start = new Date(now); start.setDate(start.getDate() - 7); return { windowStart: fmt(start), windowEnd: fmt(end) };",
+                        "language": "javascript",
+                        "arguments": "${{ \"$context\": $context, \"$workflow\": $workflow, \"$input\": $input }}"
+                      }
+                    },
+                    "export": {
+                      "as": "{ ...$context, outputs: { ...$context?.outputs, \"Javascript_DateWindow\": $output } }"
+                    },
+                    "metadata": {
+                      "activityType": "JsInvoke",
+                      "displayName": "Calculate date window",
+                      "fullName": "JsInvoke"
+                    }
+                  }
+                },
+                {
+                  "Assign_WindowStart": {
+                    "set": {
+                      "windowStart": "${$context.outputs.Javascript_DateWindow.windowStart}"
+                    },
+                    "export": {
+                      "as": "{ ...$context, variables: { ...$context.variables, ...$output } }"
+                    },
+                    "metadata": {
+                      "activityType": "Assign",
+                      "displayName": "Set windowStart",
+                      "fullName": "Assign",
+                      "isTransparent": false
+                    }
+                  }
+                },
+                {
+                  "Assign_WindowEnd": {
+                    "set": {
+                      "windowEnd": "${$context.outputs.Javascript_DateWindow.windowEnd}"
+                    },
+                    "export": {
+                      "as": "{ ...$context, variables: { ...$context.variables, ...$output } }"
+                    },
+                    "metadata": {
+                      "activityType": "Assign",
+                      "displayName": "Set windowEnd",
+                      "fullName": "Assign",
+                      "isTransparent": false
+                    }
+                  }
+                },
+                {
+                  "HTTP_Request_Coupa": {
+                    "call": "UiPath.Http",
+                    "with": {
+                      "connector": "uipath-uipath-http",
+                      "connectionId": "5fadfc73-a372-46ae-a27c-2481741eed07",
+                      "connectionResourceId": "5fadfc73-a372-46ae-a27c-2481741eed07",
+                      "method": "POST",
+                      "endpoint": "/http-request",
+                      "bodyParameters": {
+                        "authentication": "connector",
+                        "targetConnector": "uipath-coupa-coupa",
+                        "connection": "5fadfc73-a372-46ae-a27c-2481741eed07",
+                        "method": "GET",
+                        "url": "https://uipath-test.coupahost.com/api/invoices",
+                        "query": {
+                          "status[in]": "draft,new",
+                          "invoice-date[gt_or_eq]": "${$context.variables.windowStart}",
+                          "invoice-date[lt_or_eq]": "${$context.variables.windowEnd}",
+                          "order_by": "invoice-date",
+                          "dir": "desc",
+                          "limit": "50"
+                        }
+                      }
+                    },
+                    "export": {
+                      "as": "{ ...$context, outputs: { ...$context?.outputs, \"http_request_coupa\": $output } }"
+                    },
+                    "metadata": {
+                      "activityType": "Connector",
+                      "displayName": "HTTP Request: Coupa",
+                      "uiPathActivityTypeId": "5c4cc855-b42a-37e6-b910-de8588998fce",
+                      "configuration": "{\"essentialConfiguration\":{\"connectorVersion\":\"1.4.44\",\"scriptRef\":null,\"customFieldsRequestDetails\":null,\"instanceParameters\":{\"connectorKey\":\"uipath-uipath-http\",\"objectName\":\"http-request\",\"httpMethod\":\"POST\",\"activityType\":\"Curated\",\"version\":\"1.0.0\",\"supportsStreaming\":false,\"subType\":\"method\"},\"objectName\":\"http-request\",\"operation\":\"create\",\"packageVersion\":\"1.0.0\",\"httpMethod\":\"POST\",\"path\":\"/http-request\",\"unifiedTypesCompatible\":true,\"savedJitInputFieldId\":\"in_http-request\"}}"
+                    }
+                  }
+                },
+                {
+                  "Javascript_FilterAndCount": {
+                    "run": {
+                      "script": {
+                        "code": "const response = $context.outputs.http_request_coupa; if (!response || response.statusCode < 200 || response.statusCode >= 300) { throw new Error('Coupa query failed with status ' + (response ? response.statusCode : 'unknown')); } const invoices = response.content || []; let qualifyingCount = 0; for (const inv of invoices) { if (inv['is-credit-note'] === true) { console.log('Excluded: credit note, invoice id=' + inv.id); continue; } const lines = inv['invoice-lines'] || []; const hasLinkedPo = lines.some(line => (line['po-number'] && String(line['po-number']).trim() !== '') || (line['order-header-num'] && String(line['order-header-num']).trim() !== '')); if (hasLinkedPo) { continue; } qualifyingCount++; } return { qualifyingCount };",
+                        "language": "javascript",
+                        "arguments": "${{ \"$context\": $context, \"$workflow\": $workflow, \"$input\": $input }}"
+                      }
+                    },
+                    "export": {
+                      "as": "{ ...$context, outputs: { ...$context?.outputs, \"Javascript_FilterAndCount\": $output } }"
+                    },
+                    "metadata": {
+                      "activityType": "JsInvoke",
+                      "displayName": "Filter invoices and count qualifying",
+                      "fullName": "JsInvoke"
+                    }
+                  }
+                },
+                {
+                  "Assign_QualifyingCount": {
+                    "set": {
+                      "qualifyingCount": "${$context.outputs.Javascript_FilterAndCount.qualifyingCount}"
+                    },
+                    "export": {
+                      "as": "{ ...$context, variables: { ...$context.variables, ...$output } }"
+                    },
+                    "metadata": {
+                      "activityType": "Assign",
+                      "displayName": "Set qualifyingCount",
+                      "fullName": "Assign",
+                      "isTransparent": false
+                    }
+                  }
+                },
+                {
+                  "If_1#Wrapper": {
+                    "do": [
+                      {
+                        "If_1": {
+                          "switch": [
+                            {
+                              "case": {
+                                "when": "${$context.variables.qualifyingCount > 0}",
+                                "then": "If_1#Then"
+                              }
+                            },
+                            {
+                              "default": {
+                                "then": "If_1#Else"
+                              }
+                            }
+                          ],
+                          "metadata": {
+                            "displayName": "If qualifying count > 0"
+                          }
+                        }
+                      },
+                      {
+                        "If_1#Then": {
+                          "do": [
+                            {
+                              "Javascript_BuildUrl": {
+                                "run": {
+                                  "script": {
+                                    "code": "const ws = $context.variables.windowStart; const we = $context.variables.windowEnd; const url = `https://uipath-test.coupahost.com/invoices?q%5Binvoice_date_gteq%5D=${ws}&q%5Binvoice_date_lteq%5D=${we}&q%5Bstatus_eq%5D=draft`; return { coupaFilteredUrl: url };",
+                                    "language": "javascript",
+                                    "arguments": "${{ \"$context\": $context, \"$workflow\": $workflow, \"$input\": $input }}"
+                                  }
+                                },
+                                "export": {
+                                  "as": "{ ...$context, outputs: { ...$context?.outputs, \"Javascript_BuildUrl\": $output } }"
+                                },
+                                "metadata": {
+                                  "activityType": "JsInvoke",
+                                  "displayName": "Construct Coupa filtered URL",
+                                  "fullName": "JsInvoke"
+                                }
+                              }
+                            },
+                            {
+                              "Assign_CoupaUrl": {
+                                "set": {
+                                  "coupaFilteredUrl": "${$context.outputs.Javascript_BuildUrl.coupaFilteredUrl}"
+                                },
+                                "export": {
+                                  "as": "{ ...$context, variables: { ...$context.variables, ...$output } }"
+                                },
+                                "metadata": {
+                                  "activityType": "Assign",
+                                  "displayName": "Set coupaFilteredUrl",
+                                  "fullName": "Assign",
+                                  "isTransparent": false
+                                }
+                              }
+                            },
+                            {
+                              "Javascript_ComposeMessage": {
+                                "run": {
+                                  "script": {
+                                    "code": "const count = $context.variables.qualifyingCount; const url = $context.variables.coupaFilteredUrl; const msg = `${count} invoices from the last seven days have no purchase order linked. An invoice without a linked PO cannot be matched or paid under our no-PO-no-pay policy, and payment to the supplier stalls until it is fixed. Please make sure a purchase order exists for these invoices and is correctly linked to each one. Open the list in Coupa: ${url}`; return { slackMessageBody: msg };",
+                                    "language": "javascript",
+                                    "arguments": "${{ \"$context\": $context, \"$workflow\": $workflow, \"$input\": $input }}"
+                                  }
+                                },
+                                "export": {
+                                  "as": "{ ...$context, outputs: { ...$context?.outputs, \"Javascript_ComposeMessage\": $output } }"
+                                },
+                                "metadata": {
+                                  "activityType": "JsInvoke",
+                                  "displayName": "Compose Slack message",
+                                  "fullName": "JsInvoke"
+                                }
+                              }
+                            },
+                            {
+                              "Assign_SlackMessage": {
+                                "set": {
+                                  "slackMessageBody": "${$context.outputs.Javascript_ComposeMessage.slackMessageBody}"
+                                },
+                                "export": {
+                                  "as": "{ ...$context, variables: { ...$context.variables, ...$output } }"
+                                },
+                                "metadata": {
+                                  "activityType": "Assign",
+                                  "displayName": "Set slackMessageBody",
+                                  "fullName": "Assign",
+                                  "isTransparent": false
+                                }
+                              }
+                            },
+                            {
+                              "HTTP_Request_Slack": {
+                                "call": "UiPath.Http",
+                                "with": {
+                                  "connector": "uipath-uipath-http",
+                                  "connectionId": "43d506f7-7de2-4798-aac1-9522e2e45dbb",
+                                  "connectionResourceId": "43d506f7-7de2-4798-aac1-9522e2e45dbb",
+                                  "method": "POST",
+                                  "endpoint": "/http-request",
+                                  "bodyParameters": {
+                                    "authentication": "connector",
+                                    "targetConnector": "uipath-salesforce-slack",
+                                    "connection": "43d506f7-7de2-4798-aac1-9522e2e45dbb",
+                                    "method": "POST",
+                                    "url": "https://slack.com/api/chat.postMessage",
+                                    "body": "${{ channel: 'irina.capatina@uipath.com', text: $context.variables.slackMessageBody }}"
+                                  }
+                                },
+                                "export": {
+                                  "as": "{ ...$context, outputs: { ...$context?.outputs, \"http_request_slack\": $output } }"
+                                },
+                                "metadata": {
+                                  "activityType": "Connector",
+                                  "displayName": "HTTP Request: Slack",
+                                  "uiPathActivityTypeId": "5c4cc855-b42a-37e6-b910-de8588998fce",
+                                  "configuration": "{\"essentialConfiguration\":{\"connectorVersion\":\"1.4.44\",\"scriptRef\":null,\"customFieldsRequestDetails\":null,\"instanceParameters\":{\"connectorKey\":\"uipath-uipath-http\",\"objectName\":\"http-request\",\"httpMethod\":\"POST\",\"activityType\":\"Curated\",\"version\":\"1.0.0\",\"supportsStreaming\":false,\"subType\":\"method\"},\"objectName\":\"http-request\",\"operation\":\"create\",\"packageVersion\":\"1.0.0\",\"httpMethod\":\"POST\",\"path\":\"/http-request\",\"unifiedTypesCompatible\":true,\"savedJitInputFieldId\":\"in_http-request\"}}"
+                                }
+                              }
+                            },
+                            {
+                              "Javascript_CheckSlack": {
+                                "run": {
+                                  "script": {
+                                    "code": "const response = $context.outputs.http_request_slack; if (!response || response.statusCode < 200 || response.statusCode >= 300) { throw new Error('Slack delivery failed with status ' + (response ? response.statusCode : 'unknown') + ' response: ' + JSON.stringify(response ? response.content : null)); } return { sent: true };",
+                                    "language": "javascript",
+                                    "arguments": "${{ \"$context\": $context, \"$workflow\": $workflow, \"$input\": $input }}"
+                                  }
+                                },
+                                "export": {
+                                  "as": "{ ...$context, outputs: { ...$context?.outputs, \"Javascript_CheckSlack\": $output } }"
+                                },
+                                "metadata": {
+                                  "activityType": "JsInvoke",
+                                  "displayName": "Verify Slack response",
+                                  "fullName": "JsInvoke"
+                                }
+                              }
+                            }
+                          ],
+                          "then": "exit"
+                        }
+                      },
+                      {
+                        "If_1#Else": {
+                          "do": [],
+                          "then": "exit"
+                        }
+                      }
+                    ],
+                    "export": {
+                      "as": "{ ...$context, outputs: { ...$context?.outputs, \"If_1\": $output } }"
+                    },
+                    "metadata": {
+                      "activityType": "If",
+                      "displayName": "If qualifying count > 0",
+                      "fullName": "If"
+                    }
+                  }
+                }
+              ],
+              "catch": {
+                "as": "error",
+                "do": [
+                  {
+                    "Javascript_LogError": {
+                      "run": {
+                        "script": {
+                          "code": "const msg = $error.title || $error.detail || 'Unknown error'; console.error('NoPoInvoiceChaser failed: ' + msg); throw new Error(msg);",
+                          "language": "javascript",
+                          "arguments": "${{ \"$context\": $context, \"$workflow\": $workflow, \"$input\": $input }}"
+                        }
+                      },
+                      "export": {
+                        "as": "{ ...$context, outputs: { ...$context?.outputs, \"Javascript_LogError\": $output } }"
+                      },
+                      "metadata": {
+                        "activityType": "JsInvoke",
+                        "displayName": "Log error and rethrow",
+                        "fullName": "JsInvoke"
+                      }
+                    }
+                  }
+                ]
+              },
+              "export": {
+                "as": "{ ...$context, outputs: { ...$context?.outputs, \"Try_Catch_1\": $output } }"
+              },
+              "metadata": {
+                "activityType": "TryCatch",
+                "displayName": "Try Catch",
+                "fullName": "TryCatch"
+              }
+            }
+          }
+        ],
+        "metadata": {
+          "activityType": "Sequence",
+          "displayName": "Sequence",
+          "fullName": "Sequence"
+        }
+      }
+    }
+  ],
+  "evaluate": {
+    "mode": "strict",
+    "language": "javascript"
+  }
+}
