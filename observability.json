@@ -46,12 +46,12 @@
       "run": 35588580456
     },
     "Production": {
-      "status": "in-progress",
-      "updatedAt": "2026-09-22T00:14:06Z",
+      "status": "faulted",
+      "updatedAt": "2026-09-22T00:15:19Z",
       "decidedBy": "human",
-      "task": "Deploying",
+      "task": "The production run failed",
       "run": 35671071556,
-      "runUrl": "https://github.com/irina-capatina-org/jactiv-707-no-po-invoice-chaser/actions/runs/35668125989"
+      "runUrl": "https://github.com/irina-capatina-org/jactiv-707-no-po-invoice-chaser/actions/runs/35671071556"
     }
   },
   "documents": {
