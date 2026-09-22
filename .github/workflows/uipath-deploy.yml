@@ -492,136 +492,95 @@ jobs:
           # Link state lives in the deploy config: a resource with `linkToResource`
           # binds to an existing entity, one without it is provisioned fresh.
           link_connections() {
-          uip solution deploy config get "$NAME" -d "$CONFIG" --package-version "$VERSION" --output json >/dev/null 2>&1 \
-            || { echo "::warning::Could not fetch the deploy config for $NAME v$VERSION - deploying without link overrides."; return 1; }
+          # 1. Resolve the folder we are told the connections live in, and prove the
+          #    DEPLOYING IDENTITY can see it. This is the check that matters: the CI
+          #    authenticates as an external application, not as a person, and
+          #    Integration Service connections are account-scoped. A run once listed
+          #    three connections from entirely different folders and none of ours,
+          #    because the app had no access to this one - and the only symptom was
+          #    "Resource '<name>' was not found in folder 'Fusion2026' in the target
+          #    environment", three fallbacks deep.
+          cat > "${RUNNER_TEMP:-/tmp}/folder_key.py" <<'EOF_FKEY'
+          import json, re, sys
 
-          # Where each connection ACTUALLY lives, asked of Orchestrator rather than
-          # assumed. `deploy config link` only edits the local JSON - it never checks
-          # that the target exists - so a wrong folder path passes here silently and
-          # only surfaces at deploy time as
-          #   HTTP 400 LinkedResourceNotFound: Resource '<name>' was not found in
-          #   folder '<folder>' in the target environment
-          # which is exactly what a guessed folder path produced.
-          # Read the SOLUTION resource index, not the Integration Service list. They
-          # are different registries: `uip is connections list` reports the connection
-          # as living in Fusion2026 and it does - but `deploy run` validates
-          # linkToResource against the solution/RCS index, and linking by the IS folder
-          # produced HTTP 400 LinkedResourceNotFound against a folder the UI clearly
-          # shows. Ask the index that does the validating.
-          uip solution resources list --source remote --kind Connection --output json \
-            > "${RUNNER_TEMP:-/tmp}/connections.json" 2>/dev/null \
-            || echo "::warning::Could not list remote Connection resources - falling back to $FOLDER_PATH."
+          try:
+              doc = json.load(sys.stdin)
+          except Exception:
+              raise SystemExit(0)
 
-          cat > "${RUNNER_TEMP:-/tmp}/resolve_connections.py" <<'EOF_CONN'
-          import json, sys
-
-          cfg_path, conn_path = sys.argv[1], sys.argv[2]
-
-          def load(p):
-              try:
-                  return json.load(open(p, encoding="utf-8"))
-              except Exception:
-                  return None
-
-          # name -> (folderKey, folderName).
-          #
-          # linkToResource.folderPath wants the folder KEY, not the folder name. The
-          # solution's own userProfile/<user>/debug_overwrites.json proves it - it
-          # records the working binding as
-          #   folderFullyQualifiedName: "Fusion2026"
-          #   folderKey:  "3a31ccff-0e35-48ad-9713-62e06270d80d"
-          #   folderPath: "3a31ccff-0e35-48ad-9713-62e06270d80d"   <- the key
-          # Passing the NAME produced "Resource '<name>' was not found in folder
-          # 'Fusion2026' in the target environment" even though it is plainly there.
-          where = {}
-          doc = load(conn_path)
-          stack = [doc] if doc is not None else []
+          stack = [doc]
           while stack:
               node = stack.pop()
               if isinstance(node, dict):
                   low = {k.lower(): v for k, v in node.items()}
-                  name = low.get("name") or low.get("connectionname")
-                  kind = str(low.get("kind", "")).lower()
-                  # A resource row: has a name and either a key or an explicit kind.
-                  if name and (("key" in low) or ("connection" in kind) or ("connector" in low)):
-                      def pick(*keys):
-                          for k in keys:
-                              v = low.get(k)
-                              if isinstance(v, str) and v.strip():
-                                  return v.strip()
-                              if isinstance(v, dict):
-                                  vv = (v.get("FullyQualifiedName") or v.get("Key")
-                                        or v.get("Path") or v.get("Name"))
-                                  if vv:
-                                      return str(vv)
-                          return ""
-
-                      key = pick("folderkey")
-                      disp = pick("folder", "foldername", "folderfullyqualifiedname",
-                                  "folderpath")
-                      where.setdefault(str(name), (key, disp))
+                  for k in ("key", "folderkey", "id"):
+                      v = low.get(k)
+                      if isinstance(v, str) and re.fullmatch(r"[0-9a-fA-F-]{36}", v):
+                          print(v)
+                          raise SystemExit(0)
                   stack.extend(node.values())
               elif isinstance(node, list):
                   stack.extend(node)
+          EOF_FKEY
+          FOLDER_KEY=$(uip or folders get "$FOLDER_PATH" --output json 2>/dev/null \
+            | python3 "${RUNNER_TEMP:-/tmp}/folder_key.py")
+          if [ -z "$FOLDER_KEY" ]; then
+            echo "::error::The deploying account cannot resolve folder '$FOLDER_PATH'."
+            echo "::error::It authenticates as an external application, not as you. Grant that application access to '$FOLDER_PATH' in Orchestrator (Manage access), then re-run."
+            uip or folders list --output table 2>&1 | head -15
+            return 1
+          fi
+          echo "  folder '$FOLDER_PATH' -> $FOLDER_KEY"
 
-          print("#FOUND " + ("; ".join(f"{k}=>{d or '?'}[{kk or 'no key'}]"
-                                        for k, (kk, d) in sorted(where.items()))
-                             if where else "(nothing - the solution index has no Connection resources)"),
-                file=sys.stderr)
+          # 2. The deploy config lists the resources this package will provision.
+          uip solution deploy config get "$NAME" -d "$CONFIG" --package-version "$VERSION" --output json >/dev/null 2>&1 \
+            || { echo "::warning::Could not fetch the deploy config for $NAME v$VERSION - deploying without link overrides."; return 1; }
 
-          cfg = load(cfg_path) or {}
-          for r in (cfg.get("resources") or []):
-              if "connection" not in str(r.get("kind", "")).lower():
-                  continue
-              name = r.get("name")
-              if not name:
-                  continue
-              # resource name, folder KEY (what link wants), folder NAME (fallback)
-              kk, disp = where.get(name, ("", "?"))
-              print(f"{name}\t{kk}\t{disp}")
+          cat > "${RUNNER_TEMP:-/tmp}/list_connections.py" <<'EOF_CONN'
+          import json, sys
+
+          try:
+              doc = json.load(open(sys.argv[1], encoding="utf-8"))
+          except Exception:
+              raise SystemExit(0)
+
+          for r in (doc.get("resources") or []):
+              if "connection" in str(r.get("kind", "")).lower():
+                  name = r.get("name")
+                  if name:
+                      print(name)
           EOF_CONN
 
+          # 3. Advisory only. If a connection the package declares is not visible to
+          #    this account, linking it will fail - say so before the 400 rather than
+          #    after, but do not let it choose the folder.
+          VISIBLE=$(uip is connections list --all-folders --output json 2>/dev/null || true)
+
           local n=0 total=0
-          LINK_RETRY=""
-          while IFS=$'\t' read -r res fkey fname; do
+          while IFS= read -r res; do
             [ -n "$res" ] || continue
             total=$((total + 1))
 
-            # Prefer the key; remember the name so a LinkedResourceNotFound can retry.
-            if [ -n "$fkey" ]; then
-              folder="$fkey"
-              LINK_RETRY="$LINK_RETRY $res=$fname"
-            else
-              folder="$fname"
-            fi
+            case "$VISIBLE" in
+              *"\"$res\""*) : ;;
+              *) echo "::warning::Connection '$res' is not visible to the deploying account. If the link fails, that is why - it needs access to the connection, not just to the folder." ;;
+            esac
 
-            if [ "$folder" = "?" ]; then
-              echo "::warning::Connection '$res' is not in the solution resource index ('uip solution resources list --source remote --kind Connection')."
-              echo "::warning::That is the index deploy validates links against, so linking it will fail. It may need adding first: uip solution resources add --source remote --kind Connection --name '$res' --folder-path '$FOLDER_PATH'"
-              folder="$FOLDER_PATH"
-            fi
-
-            if [ -n "$folder" ]; then
-              ARGS=(--name "$res" --folder-path "$folder")
-              DEST="$res in ${fname:-?} (folder-path=$folder)"
-            else
-              ARGS=(--name "$res"); DEST="$res (tenant scope)"
-            fi
-
-            if OUT=$(uip solution deploy config link "$CONFIG" "$res" "${ARGS[@]}" 2>&1); then
-              echo "  linked '$res' -> $DEST"
+            # linkToResource.folderPath takes the folder KEY, not its name. The
+            # solution's own debug_overwrites.json records the working binding that
+            # way: folderFullyQualifiedName "Fusion2026", folderPath "<key>".
+            if OUT=$(uip solution deploy config link "$CONFIG" "$res" \
+                       --name "$res" --folder-path "$FOLDER_KEY" 2>&1); then
+              echo "  linked '$res' -> $FOLDER_PATH ($FOLDER_KEY)"
               n=$((n + 1))
             else
-              echo "::warning::Could not link connection '$res' to $DEST."
+              echo "::warning::Could not link connection '$res'."
               echo "$OUT" | head -5 | sed 's/^/      /'
             fi
-          done < <(python3 "${RUNNER_TEMP:-/tmp}/resolve_connections.py" "$CONFIG" "${RUNNER_TEMP:-/tmp}/connections.json" 2> >(sed 's/^#FOUND /  connections in Orchestrator: /' >&2))
+          done < <(python3 "${RUNNER_TEMP:-/tmp}/list_connections.py" "$CONFIG")
 
-          echo "Linked $n of $total connection(s)."
-          echo "$LINK_RETRY" > "${RUNNER_TEMP:-/tmp}/link_retry.txt"
-          if [ "$total" -gt 0 ] && [ "$n" -lt "$total" ]; then
-            echo "::warning::$((total - n)) connection(s) could not be linked - expect CNS1072."
-          fi
+          echo "Linked $n of $total connection(s) to $FOLDER_PATH."
+          echo "$FOLDER_PATH" > "${RUNNER_TEMP:-/tmp}/link_retry.txt"
           [ "$n" -gt 0 ]
           }
 
@@ -728,12 +687,11 @@ jobs:
                && [ -s "${RUNNER_TEMP:-/tmp}/link_retry.txt" ] && [ -z "${RELINKED:-}" ]; then
               echo "::notice::Link by folder key was rejected - relinking by folder name and retrying once."
               RELINKED=1
-              for pair in $(cat "${RUNNER_TEMP:-/tmp}/link_retry.txt"); do
-                r="${pair%%=*}"; f="${pair#*=}"
-                [ -n "$r" ] && [ -n "$f" ] && [ "$f" != "?" ] || continue
-                uip solution deploy config link "$CONFIG" "$r" --name "$r" --folder-path "$f" >/dev/null 2>&1 \
-                  && echo "  relinked '$r' -> folder-path=$f"
-              done
+              while IFS= read -r r; do
+                [ -n "$r" ] || continue
+                uip solution deploy config link "$CONFIG" "$r" --name "$r" --folder-path "$FOLDER_PATH" >/dev/null 2>&1 \
+                  && echo "  relinked '$r' -> folder-path=$FOLDER_PATH"
+              done < <(python3 "${RUNNER_TEMP:-/tmp}/list_connections.py" "$CONFIG")
               continue
             fi
 
