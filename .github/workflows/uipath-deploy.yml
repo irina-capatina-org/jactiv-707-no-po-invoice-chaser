@@ -475,6 +475,82 @@ jobs:
           set -uo pipefail
           MAX_ATTEMPTS=10
           DELAY=10
+          CONFIG="${RUNNER_TEMP:-/tmp}/deploy-config.json"
+
+          # ── Bind to the EXISTING connections instead of provisioning new ones ──
+          # `deploy run` creates a new folder and, by default, provisions a FRESH copy
+          # of every resource the package declares - including Integration Service
+          # connections. A fresh connection has never been authenticated, so the
+          # deployment stops at
+          #   [CNS1072] connection <name>: You will need to authenticate this
+          #   connection before proceeding further
+          # even though a working, authenticated connection of the same name is
+          # sitting in the parent folder. The connections are shared programme
+          # infrastructure (architectural-considerations.md §4: never create, rename
+          # or duplicate them), so every one of them must be LINKED, not installed.
+          #
+          # Link state lives in the deploy config: a resource with `linkToResource`
+          # binds to an existing entity, one without it is provisioned fresh.
+          link_connections() {
+          uip solution deploy config get "$NAME" -d "$CONFIG" --package-version "$VERSION" --output json >/dev/null 2>&1 \
+            || { echo "::warning::Could not fetch the deploy config for $NAME v$VERSION - deploying without link overrides."; return 1; }
+
+          cat > "${RUNNER_TEMP:-/tmp}/list_connections.py" <<'EOF_CONN'
+          import json, sys
+
+          # Every connection resource in the config, by the name the SOLUTION knows it
+          # by. Kind naming has varied ("connection", "Connection", "connections"), so
+          # match loosely rather than pinning one spelling.
+          try:
+              doc = json.load(open(sys.argv[1], encoding="utf-8"))
+          except Exception:
+              raise SystemExit(0)
+
+          for r in (doc.get("resources") or []):
+              if "connection" in str(r.get("kind", "")).lower():
+                  name = r.get("name")
+                  if name:
+                      print(name)
+          EOF_CONN
+
+          local n=0 total=0
+          while IFS= read -r res; do
+            [ -n "$res" ] || continue
+            total=$((total + 1))
+            # The solution's resource name IS the Orchestrator connection name - the
+            # solution imported these from those connections in the first place.
+            #
+            # Two attempts, because an Integration Service connection is not always
+            # folder-scoped: try the parent folder first, then tenant scope with no
+            # --folder-path at all (the flag is optional).
+            if OUT=$(uip solution deploy config link "$CONFIG" "$res" \
+                       --name "$res" --folder-path "$FOLDER_PATH" 2>&1); then
+              echo "  linked '$res' -> $FOLDER_PATH/$res"
+              n=$((n + 1))
+            elif OUT=$(uip solution deploy config link "$CONFIG" "$res" --name "$res" 2>&1); then
+              echo "  linked '$res' -> $res (tenant scope, not folder-scoped)"
+              n=$((n + 1))
+            else
+              echo "::warning::Could not link connection '$res'. It will be provisioned fresh and will need authenticating, which fails the deployment with CNS1072."
+              echo "$OUT" | head -5 | sed 's/^/      /'
+            fi
+          done < <(python3 "${RUNNER_TEMP:-/tmp}/list_connections.py" "$CONFIG")
+
+          echo "Linked $n of $total connection(s)."
+          # Partial linking still fails the deployment on the unlinked one, so say so
+          # loudly rather than letting the deploy report it as a mystery.
+          if [ "$total" -gt 0 ] && [ "$n" -lt "$total" ]; then
+            echo "::warning::$((total - n)) connection(s) could not be linked - expect CNS1072."
+          fi
+          [ "$n" -gt 0 ]
+          }
+
+          CONFIG_ARG=""
+          if link_connections; then
+            CONFIG_ARG="--config-file $CONFIG"
+          else
+            echo "::warning::Deploying without connection links. If it fails with CNS1072, the connections in $FOLDER_PATH need to exist with the same names as in the solution."
+          fi
 
           # Everything in here is deliberately at column 0: a heredoc terminator has
           # to start the line, and indentation inside a shell function is irrelevant.
@@ -522,7 +598,8 @@ jobs:
               --package-name "$NAME" \
               --package-version "$VERSION" \
               --folder-name "$NAME" \
-              --parent-folder-path "$FOLDER_PATH" 2>&1) || EXIT_CODE=$?
+              --parent-folder-path "$FOLDER_PATH" \
+              $CONFIG_ARG 2>&1) || EXIT_CODE=$?
             echo "$OUTPUT"
 
             if echo "$OUTPUT" | grep -q "Deployment polling failed"; then
@@ -534,6 +611,17 @@ jobs:
               sleep $DELAY
               continue
             fi
+            # A FOLDER collision is not a deployment collision. `deploy run` always
+            # creates a new folder, so a leftover folder from a failed attempt gives
+            # "Folder already exists" - routing that to the upgrade path would try to
+            # upgrade a deployment that may not exist, or one that never installed
+            # cleanly (which the server rejects).
+            if [ "$EXIT_CODE" -ne 0 ] && echo "$OUTPUT" | grep -qi "folder already exists"; then
+              echo "::error::The Orchestrator folder '$FOLDER_PATH/$NAME' already exists, left over from an earlier deployment attempt."
+              echo "::error::Remove it first - 'uip solution deploy uninstall <deployment-key>' clears the deployment and its folder - then re-run. 'uip solution deploy list' shows the key."
+              exit "$EXIT_CODE"
+            fi
+
             if [ "$EXIT_CODE" -ne 0 ] && echo "$OUTPUT" | grep -q "already exists"; then
               echo "::notice::A deployment already exists - upgrading instead."
               # `deploy upgrade` takes the deployment KEY as a positional argument -
@@ -544,9 +632,21 @@ jobs:
                 uip solution deploy list --limit 200 --output table 2>&1 | head -20
                 exit 1
               fi
-              echo "Upgrading deployment $KEY to $VERSION"
-              uip solution deploy upgrade "$KEY" --version "$VERSION"
-              exit $?
+              # No --version: only the LATEST published version is a valid target
+              # today, and passing an explicit one that is not the newest is rejected.
+              # The pipeline publishes immediately before this, so newest IS ours.
+              echo "Upgrading deployment $KEY (to the newest published version)"
+              UPOUT=$(uip solution deploy upgrade "$KEY" 2>&1); UPRC=$?
+              echo "$UPOUT"
+              if [ "$UPRC" -ne 0 ]; then
+                echo "::error::Upgrade was rejected. A deployment can only be upgraded when it installed cleanly - one left in a failed or partially-provisioned state has to be uninstalled and deployed again:"
+                echo "::error::  uip solution deploy uninstall $KEY"
+              fi
+              exit "$UPRC"
+            fi
+            if echo "$OUTPUT" | grep -q "CNS1072"; then
+              echo "::error::The deployment provisioned NEW, unauthenticated connections instead of binding to the existing ones in $FOLDER_PATH."
+              echo "::error::Each connection in the solution must be linked in the deploy config. Check that a connection with the SAME NAME exists in $FOLDER_PATH and that 'uip solution deploy config link' succeeded above."
             fi
             exit ${EXIT_CODE}
           done
